@@ -6,6 +6,7 @@ from telegram import Update
 from telegram.ext import ApplicationBuilder, ContextTypes, MessageHandler, filters, CommandHandler
 from llm_service import LLMService
 from email_service import EmailService
+from web_search_service import WebSearchService
 
 # Загружаем переменные окружения
 load_dotenv()
@@ -19,6 +20,7 @@ logging.basicConfig(
 # Инициализируем сервисы
 llm = LLMService()
 email_bot = EmailService()
+web_search = WebSearchService()
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Ответ на команду /start"""
@@ -58,8 +60,10 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "Ты - диспетчер задач. Твоя цель - понять, что хочет пользователь.\n"
         "Если пользователь хочет отправить письмо (упоминает 'почту', 'email', 'отправь на...'), "
         "ответь строго в формате JSON: {\"action\": \"email\", \"recipient\": \"адрес\", \"body\": \"текст письма\"}.\n"
-        "Если пользователь просто общается, ответь в формате JSON: {\"action\": \"chat\", \"answer\": \"твой ответ\"}.\n"
-        "Если запрос непонятный или ты не знаешь как помочь, ответь JSON: {\"action\": \"unknown\"}."
+        "Если пользователю нужна актуальная информация из интернета (новости, цены на других сайтах, поиск чего-то), "
+        "ответь JSON: {\"action\": \"search\", \"query\": \"поисковый запрос на русском языке\"}.\n"
+        "Если пользователь просто общается или спрашивает то, что есть в твоих знаниях (школа cook.ee), ответь в формате JSON: {\"action\": \"chat\", \"answer\": \"твой ответ\"}.\n"
+        "Если запрос непонятный, ответь JSON: {\"action\": \"unknown\"}."
     )
     
     classification_prompt = f"Запрос пользователя: '{user_text}'"
@@ -87,7 +91,25 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await update.message.reply_text(result)
             
         elif data.get("action") == "chat":
-            await update.message.reply_text(data.get("answer"))
+            response_text = data.get("answer")
+            await update.message.reply_text(f"{response_text}\n\n— AI помощник PROFftech")
+            
+        elif data.get("action") == "search":
+            query = data.get("query")
+            await update.message.reply_text(f"Ищу в интернете: {query}...")
+            
+            # Выполняем поиск
+            search_results = web_search.search(query)
+            
+            # Формируем ответ на основе результатов поиска
+            answer_prompt = (
+                f"Пользователь спросил: '{user_text}'\n"
+                f"Результаты поиска в интернете:\n{search_results}\n\n"
+                f"На основе этих результатов составь краткий и полезный ответ пользователю. "
+                f"Если информации недостаточно, так и скажи."
+            )
+            final_answer = llm.ask(answer_prompt)
+            await update.message.reply_text(f"{final_answer}\n\n— AI помощник PROFftech")
             
         else: # action == "unknown" или ошибка понимания
             error_msg = f"Пользователь {user_name} отправил непонятный запрос: {user_text}"
@@ -98,7 +120,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         print(f"Ошибка логики понимания: {e}")
         # Если всё сломалось - просто отвечаем через LLM как раньше
         response = llm.ask(user_text)
-        await update.message.reply_text(response)
+        await update.message.reply_text(f"{response}\n\n— AI помощник PROFftech")
 
 if __name__ == '__main__':
     token = os.getenv("TELEGRAM_BOT_TOKEN")
