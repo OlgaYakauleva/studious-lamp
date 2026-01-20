@@ -1,29 +1,24 @@
-import requests
+from storage_service import StorageService
 import os
+import requests
 
 class LLMService:
     def __init__(self, api_key=None):
         self.api_key = api_key or os.getenv("OPENROUTER_API_KEY")
         self.url = "https://openrouter.ai/api/v1/chat/completions"
-        self.kb_path = "knowledge_base.txt"
+        self.storage = StorageService()
 
-    def _get_knowledge(self):
-        """Читает базу знаний из файла"""
-        try:
-            if os.path.exists(self.kb_path):
-                with open(self.kb_path, 'r', encoding='utf-8') as f:
-                    return f.read()
-            return ""
-        except Exception:
-            return ""
-
-    def ask(self, prompt):
+    def ask(self, prompt, user_context=None):
         if not self.api_key:
             return "Ошибка: API ключ OpenRouter не найден."
 
-        knowledge = self._get_knowledge()
-        system_content = "Ты - AI помощник PROFftech. Используй следующие знания при ответе, если они уместны:\n" + knowledge
+        # Получаем знания из JSON через сервис
+        knowledge = self.storage.get_knowledge_summary()
+        system_content = "Ты - AI помощник PROFftech. Используй эти знания при ответе:\n" + knowledge
         
+        if user_context:
+            system_content += f"\n\nКонтекст пользователя: {user_context}"
+
         headers = {
             "Authorization": f"Bearer {self.api_key}",
             "Content-Type": "application/json"

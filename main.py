@@ -17,7 +17,10 @@ logging.basicConfig(
     level=logging.INFO
 )
 
+from storage_service import StorageService
+
 # Инициализируем сервисы
+storage = StorageService()
 llm = LLMService()
 email_bot = EmailService()
 web_search = WebSearchService()
@@ -73,54 +76,56 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         import json
         llm_response = llm.ask(f"{system_prompt}\n\n{classification_prompt}")
         
-        # Пытаемся распарсить JSON (иногда LLM добавляет лишнее, поэтому чистим)
+        # Пытаемся распарсить JSON
         json_str = re.search(r'\{.*\}', llm_response, re.DOTALL).group()
         data = json.loads(json_str)
         
+        response_sent = ""
+
         if data.get("action") == "email":
             recipient = data.get("recipient")
             body = data.get("body")
             
-            # Если адрес не найден в тексте, но действие - email, пробуем найти регуляркой
             if not recipient or "@" not in recipient:
                 email_match = re.search(r'[\w\.-]+@[\w\.-]+\.\w+', user_text)
                 recipient = email_match.group() if email_match else admin_email
             
-            await update.message.reply_text(f"Принято! Отправляю письмо на {recipient}...")
+            response_sent = f"Принято! Отправляю письмо на {recipient}..."
+            await update.message.reply_text(response_sent)
             result = email_bot.send_email(recipient, f"Сообщение от {user_name} через AI помощник PROFftech", body)
             await update.message.reply_text(result)
             
         elif data.get("action") == "chat":
-            response_text = data.get("answer")
-            await update.message.reply_text(f"{response_text}\n\n— AI помощник PROFftech")
+            response_sent = data.get("answer")
+            await update.message.reply_text(f"{response_sent}\n\n— AI помощник PROFftech")
             
         elif data.get("action") == "search":
             query = data.get("query")
             await update.message.reply_text(f"Ищу в интернете: {query}...")
             
-            # Выполняем поиск
             search_results = web_search.search(query)
-            
-            # Формируем ответ на основе результатов поиска
             answer_prompt = (
                 f"Пользователь спросил: '{user_text}'\n"
                 f"Результаты поиска в интернете:\n{search_results}\n\n"
-                f"На основе этих результатов составь краткий и полезный ответ пользователю. "
-                f"Если информации недостаточно, так и скажи."
+                f"На основе этих результатов составь краткий и полезный ответ."
             )
-            final_answer = llm.ask(answer_prompt)
-            await update.message.reply_text(f"{final_answer}\n\n— AI помощник PROFftech")
+            response_sent = llm.ask(answer_prompt)
+            await update.message.reply_text(f"{response_sent}\n\n— AI помощник PROFftech")
             
-        else: # action == "unknown" или ошибка понимания
+        else: # action == "unknown"
+            response_sent = "Я не совсем понял ваш запрос, поэтому отправил уведомление администратору."
             error_msg = f"Пользователь {user_name} отправил непонятный запрос: {user_text}"
-            await update.message.reply_text("Я не совсем понял ваш запрос, поэтому отправил уведомление администратору.")
+            await update.message.reply_text(response_sent)
             email_bot.send_email(admin_email, "Непонятный запрос в AI помощник PROFftech", error_msg)
             
+        # Сохраняем информацию в JSON
+        storage.add_interaction(user_name, user_text, response_sent)
+
     except Exception as e:
-        print(f"Ошибка логики понимания: {e}")
-        # Если всё сломалось - просто отвечаем через LLM как раньше
+        print(f"Ошибка логики: {e}")
         response = llm.ask(user_text)
         await update.message.reply_text(f"{response}\n\n— AI помощник PROFftech")
+        storage.add_interaction(user_name, user_text, response)
 
 if __name__ == '__main__':
     token = os.getenv("TELEGRAM_BOT_TOKEN")
@@ -130,10 +135,9 @@ if __name__ == '__main__':
     else:
         application = ApplicationBuilder().token(token).build()
         
-        # Добавляем обработчики
         application.add_handler(CommandHandler('start', start))
         application.add_handler(CommandHandler('email', send_email_command))
         application.add_handler(MessageHandler(filters.TEXT & (~filters.COMMAND), handle_message))
         
-        print("Бот запущен с функциями Gmail. Остановка: Ctrl+C")
+        print("Бот запущен с JSON хранилищем. Остановка: Ctrl+C")
         application.run_polling()
